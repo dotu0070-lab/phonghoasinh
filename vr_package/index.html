@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <title>VR Viewer — Untitled.gltf</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    html,body{height:100%;margin:0;overflow:hidden;background:#111}
+    #info {
+      position: absolute; left: 10px; top: 10px; color: #ddd; font-family: sans-serif;
+      background: rgba(0,0,0,0.35); padding:8px 10px; border-radius:6px; z-index:10;
+    }
+    a.small{color:#9cf; text-decoration:none}
+  </style>
+</head>
+<body>
+  <div id="info">
+    <strong>VR Viewer</strong><br>
+    - Dùng chuột/phím để di chuyển; bấm nút <em>ENTER VR</em> để vào WebXR (nếu trình duyệt & thiết bị hỗ trợ).<br>
+    - Nếu mô hình "xuyên" (see-through), script cố gắng tắt chế độ trong suốt. Nếu vẫn gặp, mở file .gltf trong trình chỉnh sửa để kiểm tra vật liệu.<br>
+    <a class="small" href="#" id="resetCam">Reset camera</a>
+  </div>
+  <script type="module">
+    import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
+    import { OrbitControls } from 'https://unpkg.com/three@0.160.0/examples/jsm/controls/OrbitControls.js';
+    import { GLTFLoader } from 'https://unpkg.com/three@0.160.0/examples/jsm/loaders/GLTFLoader.js';
+    import { VRButton } from 'https://unpkg.com/three@0.160.0/examples/jsm/webxr/VRButton.js';
+
+    let camera, scene, renderer, controls;
+    const container = document.body;
+
+    init();
+    animate();
+
+    function init(){
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x222222);
+
+      camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.05, 2000);
+      camera.position.set(0, 1.6, 3);
+
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setPixelRatio(window.devicePixelRatio);
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      renderer.shadowMap.enabled = true;
+      renderer.xr.enabled = true;
+      container.appendChild(renderer.domElement);
+
+      // VR button
+      document.body.appendChild(VRButton.createButton(renderer));
+
+      // Lights
+      const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 1.2);
+      hemi.position.set(0, 5, 0);
+      scene.add(hemi);
+      const dir = new THREE.DirectionalLight(0xffffff, 0.8);
+      dir.position.set(3, 10, 10);
+      dir.castShadow = true;
+      dir.shadow.camera.top = 10;
+      dir.shadow.camera.bottom = -10;
+      dir.shadow.camera.left = -10;
+      dir.shadow.camera.right = 10;
+      scene.add(dir);
+
+      // Ground
+      const ground = new THREE.Mesh(
+        new THREE.PlaneGeometry(200,200),
+        new THREE.MeshStandardMaterial({metalness:0,roughness:1})
+      );
+      ground.rotation.x = -Math.PI/2;
+      ground.position.y = 0;
+      ground.receiveShadow = true;
+      scene.add(ground);
+
+      // Controls for non-VR interaction
+      controls = new OrbitControls(camera, renderer.domElement);
+      controls.target.set(0,1,0);
+      controls.update();
+
+      // Load model
+      const loader = new GLTFLoader();
+      loader.load('./Untitled.gltf', function(gltf){
+        const root = gltf.scene || gltf.scenes[0];
+        // Ensure materials are not transparent / not double-sided to prevent "xuyên" see-through
+        root.traverse((n) => {
+          if (n.isMesh){
+            const mat = n.material;
+            if (Array.isArray(mat)){
+              mat.forEach(cleanMaterial);
+            } else {
+              cleanMaterial(mat);
+            }
+            n.castShadow = true;
+            n.receiveShadow = true;
+          }
+        });
+
+        // Center and scale model to fit into view
+        const box = new THREE.Box3().setFromObject(root);
+        const size = box.getSize(new THREE.Vector3());
+        const maxDim = Math.max(size.x, size.y, size.z);
+        const scale = (1.5 / maxDim) || 1;
+        root.scale.setScalar(scale);
+        box.setFromObject(root);
+        const center = box.getCenter(new THREE.Vector3());
+        root.position.x += (root.position.x - center.x);
+        root.position.y += (root.position.y - center.y) + 0.01; // put slightly above ground
+        root.position.z += (root.position.z - center.z);
+
+        scene.add(root);
+      }, undefined, function(err){
+        console.error(err);
+        alert('Không tải được mô hình: ' + err.message);
+      });
+
+      window.addEventListener('resize', onWindowResize);
+      document.getElementById('resetCam').addEventListener('click', function(e){
+        e.preventDefault();
+        camera.position.set(0,1.6,3);
+        controls.target.set(0,1,0);
+        controls.update();
+      });
+
+      function cleanMaterial(m){
+        try{
+          // Prevent transparency and double-sidedness (which can cause see-through artifacts)
+          if (m){
+            if ('transparent' in m) m.transparent = false;
+            if ('opacity' in m) m.opacity = 1;
+            if ('side' in m) m.side = THREE.FrontSide;
+            if ('alphaTest' in m) m.alphaTest = 0.0;
+            if (m.emissive) m.emissiveIntensity = m.emissiveIntensity || 1.0;
+            // If material uses a map with alpha, turn off blending unless explicitly desired
+            if (m.map && m.map.format && m.map.format === THREE.RGBAFormat){
+              // leave as-is but ensure opacity 1
+              m.premultipliedAlpha = false;
+            }
+            m.needsUpdate = true;
+          }
+        }catch(e){
+          console.warn('cleanMaterial error', e);
+        }
+      }
+    }
+
+    function onWindowResize(){
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    function animate(){
+      renderer.setAnimationLoop(render);
+    }
+
+    function render(){
+      renderer.render(scene, camera);
+    }
+  </script>
+</body>
+</html>
