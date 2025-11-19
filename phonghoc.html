@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <title>VR GLTF Viewer</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    html,body { margin:0; height:100%; overflow:hidden; background:#111; }
+  </style>
+</head>
+<body>
+<script type="module">
+  import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
+  import { OrbitControls } from 'https://unpkg.com/three@0.160.0/examples/jsm/controls/OrbitControls.js';
+  import { GLTFLoader } from 'https://unpkg.com/three@0.160.0/examples/jsm/loaders/GLTFLoader.js';
+  import { VRButton } from 'https://unpkg.com/three@0.160.0/examples/jsm/webxr/VRButton.js';
+
+  let scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x222222);
+
+  let camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.1, 2000);
+  camera.position.set(0, 1.6, 3);
+
+  let renderer = new THREE.WebGLRenderer({ antialias:true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.xr.enabled = true;
+  document.body.appendChild(renderer.domElement);
+  document.body.appendChild(VRButton.createButton(renderer));
+
+  // Controls (chuột)
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.target.set(0,1,0);
+  controls.update();
+
+  // Ánh sáng
+  const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 1.2);
+  scene.add(hemi);
+  const dir = new THREE.DirectionalLight(0xffffff, 1);
+  dir.position.set(3, 10, 10);
+  scene.add(dir);
+
+  // Ground
+  const ground = new THREE.Mesh(
+    new THREE.PlaneGeometry(200,200),
+    new THREE.MeshStandardMaterial({color:0x666666})
+  );
+  ground.rotation.x = -Math.PI/2;
+  scene.add(ground);
+
+  // Load GLTF
+  const loader = new GLTFLoader();
+  loader.load("./model.gltf", (gltf) => {
+      const root = gltf.scene;
+
+      // Fix lỗi xuyên model
+      root.traverse((n)=>{
+        if(n.isMesh){
+          if(n.material){
+            n.material.transparent = false;
+            n.material.opacity = 1;
+            n.material.side = THREE.FrontSide;
+            n.material.needsUpdate = true;
+          }
+        }
+      });
+
+      // Tự căn giữa model
+      const box = new THREE.Box3().setFromObject(root);
+      const size = box.getSize(new THREE.Vector3());
+      const maxDim = Math.max(size.x, size.y, size.z);
+      root.scale.setScalar(1.5 / maxDim);
+
+      const center = box.getCenter(new THREE.Vector3());
+      root.position.sub(center);
+
+      root.position.y += 0.01;
+
+      scene.add(root);
+  });
+
+  window.addEventListener("resize", ()=>{
+    camera.aspect = window.innerWidth/window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+
+  renderer.setAnimationLoop(()=> renderer.render(scene, camera));
+</script>
+</body>
+</html>
